@@ -5,14 +5,17 @@ using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Networking;
+using System;
 
 public class ChooseMusicFromFolder : MonoBehaviour
 {
     private AudioSource myAudioSource;
+    private AudioClip myAudioClip;
     private string[] myAudioClipPaths;
     public Text mySongTitel;
     private List<int> myUnPlayedSongIndex;
     private AudioClip[] myLoadedAudioClips;
+    Queue<AudioClip> myAduioClips = new Queue<AudioClip>();
 
     public bool myShouldPlay = false;
 
@@ -27,26 +30,21 @@ public class ChooseMusicFromFolder : MonoBehaviour
 
         myAudioClipPaths = Directory.GetFiles(Application.streamingAssetsPath + "/Music", "*.mp3", SearchOption.AllDirectories);
 
-        for (int i = 0; i < myAudioClipPaths.Length; i++)
-        {
-            //int indexMp3 = myAudioClipPaths[i].IndexOf(".");
-            //myAudioClipPaths[i] = myAudioClipPaths[i].Remove(indexMp3, 4);
-            int index = myAudioClipPaths[i].IndexOf("Music");
-            myAudioClipPaths[i] = myAudioClipPaths[i].Remove(0, index - 1);
-            myAudioClipPaths[i] = myAudioClipPaths[i].Replace('\\', '/');
+        //for (int i = 0; i < myAudioClipPaths.Length; i++)
+        //{
+        //    int indexMp3 = myAudioClipPaths[i].IndexOf(".");
+        //    myAudioClipPaths[i] = myAudioClipPaths[i].Remove(indexMp3, 4);
+        //    int index = myAudioClipPaths[i].IndexOf("Music");
+        //    myAudioClipPaths[i] = myAudioClipPaths[i].Remove(0, index - 1);
+        //    myAudioClipPaths[i] = myAudioClipPaths[i].Replace('\\', '/');
 
-            myAudioClipPaths[i] = Path.Combine(Application.streamingAssetsPath + myAudioClipPaths[i]);
-        }
-
-
+        //    myAudioClipPaths[i] = Path.Combine(Application.streamingAssetsPath + myAudioClipPaths[i]);
+        //}
 
         for (int i = 0; i < myAudioClipPaths.Length; i++)
         {
             myUnPlayedSongIndex.Add(i);
         }
-
-        //myAudioSource.clip = LoadAudioClip();
-        StartCoroutine(MusicPlayer(false));
     }
 
     // Update is called once per frame
@@ -56,53 +54,49 @@ public class ChooseMusicFromFolder : MonoBehaviour
         {
             if (!myAudioSource.isPlaying || Input.GetKeyDown(KeyCode.F12))
             {
-                StartCoroutine(MusicPlayer(true));
+                int songIndex;
+                string filepath = GetRandomSongFileLocation(out songIndex);
+                StartCoroutine(LoadMusic(filepath, (clip) => { PlayMusic(clip); }));
+                RemoveSongIndexFromUnplayedSongs(songIndex);
+                mySongTitel.text = GetFileNameFromFilePath(filepath);
 
                 if (myUnPlayedSongIndex.Count <= 0)
                 {
-                    for (int i = 0; i < myAudioClipPaths.Length; i++)
-                    {
-                        myUnPlayedSongIndex.Add(i);
-                    }
+                    RefillUnplayedSongIndexList();
                 }
             }
         }
     }
 
-    IEnumerator MusicPlayer(bool aShouldPlay)
+    private void PlayMusic(AudioClip anAudioClip)
     {
-        string filepath = GetAudioFileLocation();
-
-        using (UnityWebRequest uwr = UnityWebRequestMultimedia.GetAudioClip(filepath, AudioType.MPEG))
+        if (myAudioSource.clip != null)
         {
-            yield return uwr.SendWebRequest();
+            myAudioSource.Stop();
+            AudioClip currentClip = myAudioSource.clip;
+            myAudioSource.clip = null;
+            currentClip.UnloadAudioData();
+            Destroy(currentClip);
+        }
 
-            if (uwr.isNetworkError || uwr.isHttpError)
+        myAudioSource.clip = anAudioClip;
+        myAudioSource.Play();
+    }
+
+    private IEnumerator LoadMusic(string filePath, Action<AudioClip> onLoadingCompleted)
+    {
+        using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(filePath, AudioType.MPEG))
+        {
+            yield return request.SendWebRequest();
+
+            if (request.isHttpError)
             {
-                Debug.Log(uwr.error);
+                Debug.LogWarning(request.error + "\n" + filePath);
             }
             else
             {
-                if (myAudioSource.clip != null)
-                {
-                    myAudioSource.Stop();
-                    AudioClip currentClip = myAudioSource.clip;
-                    myAudioSource.clip = null;
-                    currentClip.UnloadAudioData();
-                    Destroy(currentClip);
-                }
-
-                myAudioSource.clip = DownloadHandlerAudioClip.GetContent(uwr);
-
-
-
-                mySongTitel.text = GetFileNameFromFilePath(filepath);
-
-                if (aShouldPlay)
-                {
-                    myAudioSource.Play();
-                }
-                yield return null;
+                onLoadingCompleted(DownloadHandlerAudioClip.GetContent(request));
+                // Assign to audio source here.
             }
         }
     }
@@ -118,7 +112,7 @@ public class ChooseMusicFromFolder : MonoBehaviour
             returnString = returnString.Remove(indexFormat, 4);
 
         }
-        int index = returnString.LastIndexOf("/");
+        int index = returnString.LastIndexOf("\\");
         if (index != -1)
         {
             returnString = returnString.Substring(index + 1);
@@ -127,59 +121,37 @@ public class ChooseMusicFromFolder : MonoBehaviour
         return returnString;
     }
 
-    private string GetAudioFileLocation()
+    private string GetRandomSongFileLocation(out int aReturnSongIndex)
     {
         string returnPath = "";
 
-        int indexToPick = Random.Range(0, myUnPlayedSongIndex.Count - 1);
+        aReturnSongIndex = UnityEngine.Random.Range(0, myUnPlayedSongIndex.Count - 1);
 
-        int songIndex = myUnPlayedSongIndex[indexToPick];
-        myUnPlayedSongIndex.RemoveAt(indexToPick);
+        int songIndex = myUnPlayedSongIndex[aReturnSongIndex];
+        myUnPlayedSongIndex.RemoveAt(aReturnSongIndex);
 
         returnPath = myAudioClipPaths[songIndex];
 
         return returnPath;
     }
 
-    private AudioClip LoadAudioClip()
+    private bool RemoveSongIndexFromUnplayedSongs(int aSongIndex)
     {
-        int indexToPick = Random.Range(0, myUnPlayedSongIndex.Count - 1);
-
-        int songIndex = myUnPlayedSongIndex[indexToPick];
-        myUnPlayedSongIndex.RemoveAt(indexToPick);
-        AudioClip audioClip;
-        using (UnityWebRequest uwr = UnityWebRequestMultimedia.GetAudioClip(myAudioClipPaths[songIndex], AudioType.MPEG))
+        if (aSongIndex < myUnPlayedSongIndex.Count)
         {
-            audioClip = DownloadHandlerAudioClip.GetContent(uwr);
-        }
-
-        return audioClip;
-    }
-
-    public void OnPauseOrPlay()
-    {
-        if (myAudioSource.isPlaying)
-        {
-            myAudioSource.Pause();
+            myUnPlayedSongIndex.RemoveAt(aSongIndex);
+            return true;
         }
         else
-        {
-            StartCoroutine(StartSongWithDelay(0.7f));
-        }
+            return false;
     }
 
-    private IEnumerator StartSongWithDelay(float aDelay)
+    private void RefillUnplayedSongIndexList()
     {
-        if (mySongTitel != null)
+        for (int i = 0; i < myAudioClipPaths.Length; i++)
         {
-            mySongTitel.text = myAudioSource.clip.name;
+            myUnPlayedSongIndex.Add(i);
         }
-
-        yield return new WaitForSeconds(aDelay);
-
-        myAudioSource.Play();
-        myShouldPlay = !myShouldPlay;
-
     }
 
     public void StartSong()
